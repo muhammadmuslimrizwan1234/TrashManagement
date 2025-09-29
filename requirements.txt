@@ -1,14 +1,28 @@
+# Web framework
 flask
 flask-cors
+gunicorn
+
+# Image & ML
+opencv-python-headless
+pillow
+tensorflow-cpu
+keras
+numpy
+scipy
+scikit-learn
+imagehash
+
+# Database
 pymongo
-python-dotenv
 certifi
-werkzeug
-tensorflow
-Pillow
+
+# Env management
+python-dotenv
+
+# Google Drive API
 google-api-python-client
 google-auth
 google-auth-httplib2
-gunicorn
 google-auth-oauthlib
-imagehash
+pydrive2
