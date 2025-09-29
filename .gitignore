@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+uploads/
+dataset/
+.env
+*.pyc
+.DS_Store
+service_account.json
+models/model.h5
+models/class_names.json

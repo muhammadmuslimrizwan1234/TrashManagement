@@ -1,0 +1,15 @@
+opencv-python
+flask
+flask-cors
+pillow
+tensorflow>=2.10.0
+numpy
+pymongo
+python-dotenv
+scikit-learn
+ultralytics
+certifi
+imagehash
+pillow
+gunicorn
+pydrive2
