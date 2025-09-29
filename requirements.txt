@@ -22,5 +22,5 @@ python-dotenv==1.0.0
 google-api-python-client==2.95.0
 google-auth==2.23.2
 google-auth-httplib2==0.1.1
-google-auth-oauthlib==1.1.0
+google-auth-oauthlib==0.4.6
 pydrive2==1.15.0
