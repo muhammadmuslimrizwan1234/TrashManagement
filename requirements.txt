@@ -1,28 +1,28 @@
 # Web framework
-flask
-flask-cors
-gunicorn
+flask==2.3.3
+flask-cors==4.0.0
+gunicorn==21.2.0
 
 # Image & ML
-opencv-python-headless
-pillow
-tensorflow-cpu
-keras
-numpy
-scipy
-scikit-learn
-imagehash
+opencv-python-headless==4.8.1.78
+pillow==9.5.0
+tensorflow-cpu==2.12.0
+keras==2.12.0
+numpy==1.23.5
+scipy==1.10.1
+scikit-learn==1.2.2
+imagehash==4.3.1
 
 # Database
-pymongo
-certifi
+pymongo==4.5.0
+certifi==2023.7.22
 
 # Env management
-python-dotenv
+python-dotenv==1.0.0
 
 # Google Drive API
-google-api-python-client
-google-auth
-google-auth-httplib2
-google-auth-oauthlib
-pydrive2
+google-api-python-client==2.95.0
+google-auth==2.23.2
+google-auth-httplib2==0.1.1
+google-auth-oauthlib==0.4.6
+pydrive2==1.15.0
