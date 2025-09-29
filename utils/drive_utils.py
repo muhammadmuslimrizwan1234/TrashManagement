@@ -1,21 +1,21 @@
 import os
 import io
+import json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 
 # -------- Setup --------
-ROOT = os.path.dirname(os.path.dirname(__file__))
-CREDENTIALS_PATH = os.path.join(ROOT, "service_account.json")  # your GCP key
-
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 SERVICE = None
 
 def get_service():
     global SERVICE
     if SERVICE is None:
-        creds = service_account.Credentials.from_service_account_file(
-            CREDENTIALS_PATH, scopes=SCOPES
+        # Load from Railway variable
+        service_account_info = json.loads(os.getenv("SERVICE_ACCOUNT_JSON"))
+        creds = service_account.Credentials.from_service_account_info(
+            service_account_info, scopes=SCOPES
         )
         SERVICE = build("drive", "v3", credentials=creds)
     return SERVICE

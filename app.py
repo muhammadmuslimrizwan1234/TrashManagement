@@ -32,10 +32,7 @@ DB_NAME = os.getenv("DB_NAME", "TrashApp")
 PORT = int(os.getenv("PORT", 5000))
 DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 
-# ---------------- Download model from Drive ----------------
-print("⬇️ Downloading model + class names from Drive...")
-download_from_drive("models/model.h5", os.path.join(MODEL_DIR, "model.h5"))
-download_from_drive("models/class_names.json", os.path.join(MODEL_DIR, "class_names.json"))
+
 
 # ---------------- Flask App ----------------
 app = Flask(__name__)
@@ -216,4 +213,8 @@ def dataset_file(filename):
 
 # ---------------- Main ----------------
 if __name__ == "__main__":
+    print("⬇️ Downloading model + class names from Drive...")
+    download_from_drive("models/model.h5", os.path.join(MODEL_DIR, "model.h5"))
+    download_from_drive("models/class_names.json", os.path.join(MODEL_DIR, "class_names.json"))
+
     app.run(host="0.0.0.0", port=PORT, debug=DEBUG)
