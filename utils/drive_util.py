@@ -1,18 +1,25 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import io
 import json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
+from googleapiclient.http import MediaIoBaseDownload
 
 # -------- Setup --------
-SCOPES = ["https://www.googleapis.com/auth/drive"]
+SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]  # 🔹 Read-only
 SERVICE = None
+
+# Root folder (shared drive folder ID instead of "root")
+DRIVE_ROOT = os.getenv("DRIVE_FOLDER_ID", "root")
+
 
 def get_service():
     global SERVICE
     if SERVICE is None:
-        # Load from Railway variable
+        # Load credentials from env
         service_account_info = json.loads(os.getenv("SERVICE_ACCOUNT_JSON"))
         creds = service_account.Credentials.from_service_account_info(
             service_account_info, scopes=SCOPES
@@ -20,64 +27,41 @@ def get_service():
         SERVICE = build("drive", "v3", credentials=creds)
     return SERVICE
 
+
 # -------- Helpers --------
 def get_folder_id(path, parent_id=None):
     """
-    Get or create nested folders in Google Drive based on path (e.g. 'dataset/plastic').
-    Returns final folder ID.
+    Get (or create, if running locally with upload) nested folders in Google Drive.
+    Always starts from DRIVE_ROOT.
     """
     service = get_service()
-    parts = path.strip("/").split("/")
-    current_parent = parent_id or "root"
+    current_parent = parent_id or DRIVE_ROOT
 
+    if not path.strip():
+        return current_parent
+
+    parts = path.strip("/").split("/")
     for part in parts:
-        query = f"mimeType='application/vnd.google-apps.folder' and name='{part}' and '{current_parent}' in parents and trashed=false"
+        query = (
+            f"mimeType='application/vnd.google-apps.folder' "
+            f"and name='{part}' and '{current_parent}' in parents and trashed=false"
+        )
         results = service.files().list(q=query, fields="files(id, name)").execute()
         files = results.get("files", [])
 
         if files:
             current_parent = files[0]["id"]
         else:
-            folder_metadata = {
-                "name": part,
-                "mimeType": "application/vnd.google-apps.folder",
-                "parents": [current_parent],
-            }
-            folder = service.files().create(body=folder_metadata, fields="id").execute()
-            current_parent = folder["id"]
+            # ❌ On Railway we never create, only local
+            raise FileNotFoundError(f"Folder '{part}' not found in Drive path: {path}")
 
     return current_parent
 
-# -------- Upload --------
-def upload_to_drive(local_path, drive_path):
-    """
-    Uploads a file to Google Drive into the given drive_path (folders auto-created).
-    Example: upload_to_drive('models/model.h5', 'models/model.h5')
-    """
-    service = get_service()
-
-    folder_path, filename = os.path.split(drive_path)
-    folder_id = get_folder_id(folder_path) if folder_path else "root"
-
-    file_metadata = {"name": filename, "parents": [folder_id]}
-    media = MediaFileUpload(local_path, resumable=True)
-
-    query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
-    results = service.files().list(q=query, fields="files(id)").execute()
-    files = results.get("files", [])
-
-    if files:
-        file_id = files[0]["id"]
-        service.files().update(fileId=file_id, media_body=media).execute()
-        print(f"♻️ Updated {drive_path} in Drive")
-    else:
-        service.files().create(body=file_metadata, media_body=media).execute()
-        print(f"⬆️ Uploaded {drive_path} to Drive")
 
 # -------- Download --------
 def download_from_drive(drive_path, local_path):
     """
-    Downloads a file/folder from Google Drive.
+    Downloads a file/folder from Google Drive (read-only).
     Example:
       download_from_drive("models/model.h5", "./models/model.h5")
       download_from_drive("dataset", "./dataset")
@@ -109,7 +93,7 @@ def download_from_drive(drive_path, local_path):
     else:
         # File case
         folder_path, filename = os.path.split(drive_path)
-        folder_id = get_folder_id(folder_path) if folder_path else "root"
+        folder_id = get_folder_id(folder_path) if folder_path else DRIVE_ROOT
 
         query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
         results = service.files().list(q=query, fields="files(id)").execute()

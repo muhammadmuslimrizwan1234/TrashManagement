@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import json
 import numpy as np
@@ -9,8 +12,8 @@ from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.utils import to_categorical
 from sklearn.model_selection import train_test_split
 
-# ---- Drive Utils ----
-from utils.drive_util import download_from_drive, upload_to_drive
+# ---- Drive Utils (only download now) ----
+from utils.drive_util import download_from_drive
 
 # CONFIG
 ROOT = os.path.dirname(__file__)
@@ -19,9 +22,10 @@ OUT_MODEL_DIR = os.path.join(ROOT, "models")
 OUT_MODEL_PATH = os.path.join(OUT_MODEL_DIR, "model.h5")
 CLASS_NAMES_PATH = os.path.join(OUT_MODEL_DIR, "class_names.json")
 
-IMG_SIZE = (224, 224)
-BATCH = 16
-EPOCHS = 6
+# Training params (you can tweak later)
+IMG_SIZE = (96, 96)
+BATCH = 8
+EPOCHS = 1
 
 os.makedirs(OUT_MODEL_DIR, exist_ok=True)
 
@@ -40,9 +44,12 @@ def get_image_paths_labels(dataset_dir):
 def load_images(paths, img_size):
     X = []
     for p in paths:
-        img = load_img(p, target_size=img_size)
-        arr = img_to_array(img) / 255.0
-        X.append(arr)
+        try:
+            img = load_img(p, target_size=img_size)
+            arr = img_to_array(img) / 255.0
+            X.append(arr)
+        except Exception as e:
+            print(f"⚠️ Skipping {p}: {e}")
     return np.array(X)
 
 def main():
@@ -70,7 +77,9 @@ def main():
     X_train, X_temp, y_train, y_temp = train_test_split(
         X, y_cat, test_size=0.3, random_state=42, stratify=y_int
     )
-    X_val, X_test = train_test_split(X_temp, test_size=0.5, random_state=42)
+    X_val, X_test, y_val, y_test = train_test_split(
+        X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp.argmax(axis=1)
+    )
 
     print(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
 
@@ -98,14 +107,11 @@ def main():
     test_loss, test_acc = model.evaluate(X_test, y_test, verbose=2)
     print(f"✅ Final Test Accuracy: {test_acc*100:.2f}%")
 
-    # Save model
+    # Save model locally
     model.save(OUT_MODEL_PATH)
     print(f"💾 Model saved to {OUT_MODEL_PATH}")
 
-    # Upload results to Google Drive
-    print("⬆️ Uploading model + class names to Google Drive...")
-    upload_to_drive(OUT_MODEL_PATH, "models/model.h5")
-    upload_to_drive(CLASS_NAMES_PATH, "models/class_names.json")
+    print("📌 Now manually upload `model.h5` and `class_names.json` to Google Drive.")
 
 if __name__ == "__main__":
     main()

@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from utils.file_utils import save_to_dataset, remove_duplicate_from_other_categories
 from utils.category_utils import get_categories
 from models.classifier import predict_image_file
-from utils.drive_utils import download_from_drive
+from utils.drive_util import download_from_drive   # ✅ only download
 
 # ---------------- Load Env ----------------
 load_dotenv()
@@ -31,8 +31,6 @@ MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = os.getenv("DB_NAME", "TrashApp")
 PORT = int(os.getenv("PORT", 5000))
 DEBUG = os.getenv("DEBUG", "True").lower() == "true"
-
-
 
 # ---------------- Flask App ----------------
 app = Flask(__name__)
@@ -213,8 +211,6 @@ def dataset_file(filename):
 
 # ---------------- Main ----------------
 if __name__ == "__main__":
-    print("⬇️ Downloading model + class names from Drive...")
-    download_from_drive("models/model.h5", os.path.join(MODEL_DIR, "model.h5"))
-    download_from_drive("models/class_names.json", os.path.join(MODEL_DIR, "class_names.json"))
-
+    print("✅ Using local model and class names in /models/")
+    
     app.run(host="0.0.0.0", port=PORT, debug=DEBUG)
