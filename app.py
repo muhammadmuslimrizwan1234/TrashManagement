@@ -64,6 +64,9 @@ def predict():
         result = predict_image_file(saved_path)
         classification = result["objects"][0]  # first object
     except Exception as e:
+        # 🔥 Log full traceback to Railway logs
+        traceback.print_exc()
+        print("🔥 PREDICT ERROR:", e)
         return jsonify({"error": str(e)}), 500
 
     # Handle low confidence
@@ -74,16 +77,18 @@ def predict():
 
     hierarchy = classification.get("hierarchy", [])
 
+    # Save prediction record
     record = {
         "image_path": saved_path,
         "label": label,
         "hierarchy": hierarchy,
         "confidence": confidence,
-        "dominant_color": classification["dominant_color"],
+        "dominant_color": classification.get("dominant_color", "#000000"),
         "timestamp": datetime.utcnow()
     }
     db["predictions"].insert_one(record)
 
+    # Build response
     response = {
         "image_url": f"{request.host_url}uploads/{urllib.parse.quote(os.path.basename(saved_path))}",
         "label": record["label"],
