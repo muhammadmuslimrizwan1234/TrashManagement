@@ -7,6 +7,7 @@ from flask_cors import CORS
 from pymongo import MongoClient
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
+import traceback
 
 # ---------------- Utils ----------------
 from utils.file_utils import save_to_dataset, remove_duplicate_from_other_categories

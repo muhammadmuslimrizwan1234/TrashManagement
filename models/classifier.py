@@ -68,7 +68,7 @@ def get_dominant_color(img_path, k=3):
 
 # ---------------- Classification ----------------
 def classify_image(image_path):
-    img = keras_image.load_img(image_path, target_size=(224, 224))
+    img = keras_image.load_img(image_path, target_size=(96, 96))
     img_array = keras_image.img_to_array(img) / 255.0
     img_array = np.expand_dims(img_array, axis=0)
     preds = clf_model.predict(img_array)
