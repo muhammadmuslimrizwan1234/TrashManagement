@@ -13,7 +13,7 @@ import traceback
 from utils.file_utils import save_to_dataset, remove_duplicate_from_other_categories
 from utils.category_utils import get_categories
 from models.classifier import predict_image_file
-from utils.drive_util import download_from_drive, upload_to_drive, delete_from_drive, delete_folder_from_drive  # ✅ added
+from utils.drive_util import  upload_to_drive, delete_from_drive, delete_folder_from_drive  # ✅ added
 
 # ---------------- Load Env ----------------
 load_dotenv()
