@@ -11,10 +11,13 @@ from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 # -------- Setup --------
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 SERVICE = None
+
+# Root folder (your TrashAI-Dataset folder)
 DRIVE_ROOT = os.getenv("DRIVE_FOLDER_ID", "root")
 
 
 def get_service():
+    """Build Google Drive API service (cached)."""
     global SERVICE
     if SERVICE is None:
         service_account_info = json.loads(os.getenv("SERVICE_ACCOUNT_JSON"))
@@ -28,8 +31,8 @@ def get_service():
 # -------- Helpers --------
 def get_folder_id(path, parent_id=None, create=False):
     """
-    Get (or create if create=True) nested folders in Google Drive.
-    Always starts from DRIVE_ROOT.
+    Resolve folder path into Google Drive folder id.
+    If create=True, missing folders are created.
     """
     service = get_service()
     current_parent = parent_id or DRIVE_ROOT
@@ -43,170 +46,182 @@ def get_folder_id(path, parent_id=None, create=False):
             f"mimeType='application/vnd.google-apps.folder' "
             f"and name='{part}' and '{current_parent}' in parents and trashed=false"
         )
-        results = service.files().list(q=query, fields="files(id, name)").execute()
+        results = service.files().list(q=query, fields="files(id)").execute()
         files = results.get("files", [])
 
         if files:
             current_parent = files[0]["id"]
+        elif create:
+            folder_metadata = {
+                "name": part,
+                "mimeType": "application/vnd.google-apps.folder",
+                "parents": [current_parent],
+            }
+            folder = service.files().create(body=folder_metadata, fields="id").execute()
+            current_parent = folder["id"]
+            print(f"📂 Created folder '{part}'")
         else:
-            if create:
-                folder_metadata = {
-                    "name": part,
-                    "mimeType": "application/vnd.google-apps.folder",
-                    "parents": [current_parent],
-                }
-                folder = service.files().create(body=folder_metadata, fields="id").execute()
-                current_parent = folder["id"]
-                print(f"📂 Created folder '{part}' in Drive")
-            else:
-                raise FileNotFoundError(f"Folder '{part}' not found in Drive path: {path}")
+            raise FileNotFoundError(f"Folder '{part}' not found in Drive path: {path}")
 
     return current_parent
 
 
-def resolve_dataset_path(drive_path):
+def resolve_dataset_path(drive_path, create=False):
     """
-    Normalize drive_path so it's always relative to the existing 'dataset' folder.
-    Returns (dataset_folder_id, relative_path).
+    Always resolve inside TrashAI-Dataset/dataset.
+    Example:
+      drive_path='dataset/Metal/Zinc/img.jpg'
+      returns (dataset_folder_id, 'Metal/Zinc/img.jpg')
+    """
+    if not drive_path.startswith("dataset"):
+        raise ValueError("All dataset paths must start with 'dataset/'")
+
+    rel_path = drive_path[len("dataset/") :].strip("/")
+    dataset_folder_id = get_folder_id("dataset", parent_id=DRIVE_ROOT, create=create)
+    return dataset_folder_id, rel_path
+
+
+# -------- Download --------
+def download_from_drive(drive_path, local_path):
+    """
+    Downloads a file/folder from Google Drive.
     """
     service = get_service()
-    if drive_path.startswith("dataset/"):
-        drive_path = drive_path[len("dataset/"):]
-    elif drive_path == "dataset":
-        drive_path = ""
 
-    dataset_folder_id = get_folder_id("dataset", create=False)
-    return dataset_folder_id, drive_path
+    # Folder case
+    if not os.path.splitext(drive_path)[1]:
+        folder_id = get_folder_id(drive_path)
+        os.makedirs(local_path, exist_ok=True)
+
+        query = f"'{folder_id}' in parents and trashed=false"
+        results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
+
+        for item in results.get("files", []):
+            file_id, name, mime = item["id"], item["name"], item["mimeType"]
+            dest = os.path.join(local_path, name)
+
+            if mime == "application/vnd.google-apps.folder":
+                download_from_drive(f"{drive_path}/{name}", dest)
+            else:
+                request = service.files().get_media(fileId=file_id)
+                with io.FileIO(dest, "wb") as fh:
+                    downloader = MediaIoBaseDownload(fh, request)
+                    done = False
+                    while not done:
+                        status, done = downloader.next_chunk()
+                print(f"⬇️ Downloaded {drive_path}/{name} -> {dest}")
+    else:
+        # File case
+        folder_path, filename = os.path.split(drive_path)
+        folder_id = get_folder_id(folder_path) if folder_path else DRIVE_ROOT
+
+        query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+        results = service.files().list(q=query, fields="files(id)").execute()
+        files = results.get("files", [])
+
+        if not files:
+            print(f"⚠️ {drive_path} not found in Drive")
+            return
+
+        file_id = files[0]["id"]
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+        request = service.files().get_media(fileId=file_id)
+        with io.FileIO(local_path, "wb") as fh:
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+        print(f"⬇️ Downloaded {drive_path} -> {local_path}")
 
 
 # -------- Upload --------
 def upload_to_drive(local_path, drive_path):
     """
-    Upload local file into Google Drive dataset folder (auto-creates path).
+    Upload a local file into Google Drive dataset folder.
+    Creates intermediate folders if missing.
     """
     service = get_service()
-    dataset_folder_id, rel_path = resolve_dataset_path(drive_path)
+    dataset_folder_id, rel_path = resolve_dataset_path(drive_path, create=True)
 
     folder_path, filename = os.path.split(rel_path)
-    folder_id = get_folder_id(folder_path, parent_id=dataset_folder_id, create=True)
+    parent_id = get_folder_id(folder_path, parent_id=dataset_folder_id, create=True)
 
-    file_metadata = {"name": filename, "parents": [folder_id]}
+    file_metadata = {"name": filename, "parents": [parent_id]}
     media = MediaFileUpload(local_path, resumable=True)
 
     file = service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id"
+        body=file_metadata, media_body=media, fields="id"
     ).execute()
 
-    print(f"⬆️ Uploaded {local_path} -> dataset/{rel_path} (id={file['id']})")
+    print(f"⬆️ Uploaded {local_path} -> {drive_path} (id={file['id']})")
     return file["id"]
 
 
 # -------- Delete --------
 def delete_from_drive(drive_path):
     """
-    Delete file from Google Drive (inside dataset).
+    Delete a file or folder from dataset.
+    Only deletes the final target (not the whole parent chain).
     """
     service = get_service()
     dataset_folder_id, rel_path = resolve_dataset_path(drive_path)
 
-    folder_path, filename = os.path.split(rel_path)
-    folder_id = get_folder_id(folder_path, parent_id=dataset_folder_id, create=False)
+    if not rel_path:
+        print("⚠️ Refusing to delete root dataset folder.")
+        return
 
-    query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
-    results = service.files().list(q=query, fields="files(id)").execute()
+    parent_path, target_name = os.path.split(rel_path)
+    parent_id = get_folder_id(parent_path, parent_id=dataset_folder_id, create=False)
+
+    query = f"name='{target_name}' and '{parent_id}' in parents and trashed=false"
+    results = service.files().list(q=query, fields="files(id, mimeType)").execute()
     files = results.get("files", [])
 
     if not files:
-        print(f"⚠️ {drive_path} not found in Drive for delete")
-        return False
+        print(f"⚠️ Drive delete failed: {drive_path} not found")
+        return
 
-    file_id = files[0]["id"]
-    service.files().delete(fileId=file_id).execute()
-    print(f"🗑️ Deleted dataset/{rel_path} (id={file_id})")
-    return True
+    for file in files:
+        try:
+            service.files().delete(fileId=file["id"]).execute()
+            print(f"🗑️ Deleted {drive_path} ({file['mimeType']})")
+        except Exception as e:
+            print(f"⚠️ Failed to delete {drive_path}: {e}")
 
 
 # -------- Move --------
 def move_in_drive(old_drive_path, new_drive_path):
-    """
-    Move (rename path) a file in Google Drive within dataset.
-    """
+    """Move/rename a file or folder inside dataset."""
     service = get_service()
-    dataset_folder_id, old_rel = resolve_dataset_path(old_drive_path)
-    _, new_rel = resolve_dataset_path(new_drive_path)
 
-    old_folder, old_filename = os.path.split(old_rel)
-    old_folder_id = get_folder_id(old_folder, parent_id=dataset_folder_id, create=False)
+    old_dataset_id, old_rel_path = resolve_dataset_path(old_drive_path)
+    new_dataset_id, new_rel_path = resolve_dataset_path(new_drive_path, create=True)
 
-    query = f"name='{old_filename}' and '{old_folder_id}' in parents and trashed=false"
+    old_parent, old_filename = os.path.split(old_rel_path)
+    new_parent, new_filename = os.path.split(new_rel_path)
+
+    old_parent_id = get_folder_id(old_parent, parent_id=old_dataset_id)
+    new_parent_id = get_folder_id(new_parent, parent_id=new_dataset_id, create=True)
+
+    query = f"name='{old_filename}' and '{old_parent_id}' in parents and trashed=false"
     results = service.files().list(q=query, fields="files(id)").execute()
     files = results.get("files", [])
     if not files:
         print(f"⚠️ {old_drive_path} not found in Drive for move")
         return None
+
     file_id = files[0]["id"]
-
-    # Find new folder (create if missing)
-    new_folder, new_filename = os.path.split(new_rel)
-    new_folder_id = get_folder_id(new_folder, parent_id=dataset_folder_id, create=True)
-
-    # Move file
     file = service.files().get(fileId=file_id, fields="parents").execute()
     prev_parents = ",".join(file.get("parents", []))
 
     updated = service.files().update(
         fileId=file_id,
-        addParents=new_folder_id,
+        addParents=new_parent_id,
         removeParents=prev_parents,
         body={"name": new_filename},
         fields="id, parents"
     ).execute()
 
-    print(f"📂 Moved dataset/{old_rel} -> dataset/{new_rel}")
+    print(f"📂 Moved {old_drive_path} -> {new_drive_path}")
     return updated["id"]
-# -------- Delete Folder --------
-def delete_folder_from_drive(drive_path):
-    """
-    Delete only the last folder in the given path from Google Drive (inside dataset).
-    Example: delete_folder_from_drive("dataset/Metal/Zinc")
-    """
-    service = get_service()
-    dataset_folder_id, rel_path = resolve_dataset_path(drive_path)
-
-    if not rel_path.strip():
-        print("⚠️ Refusing to delete root 'dataset' folder")
-        return False
-
-    parts = rel_path.strip("/").split("/")
-    parent_parts = parts[:-1]
-    folder_name = parts[-1]
-
-    try:
-        parent_id = get_folder_id("/".join(parent_parts), parent_id=dataset_folder_id, create=False)
-    except FileNotFoundError:
-        print(f"⚠️ Parent folder not found for path: {drive_path}")
-        return False
-
-    # Find the exact last folder (child of parent_id)
-    query = (
-        f"mimeType='application/vnd.google-apps.folder' "
-        f"and name='{folder_name}' and '{parent_id}' in parents and trashed=false"
-    )
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    files = results.get("files", [])
-
-    if not files:
-        print(f"⚠️ Folder '{drive_path}' not found in Drive for delete")
-        return False
-
-    folder_id = files[0]["id"]
-
-    try:
-        service.files().delete(fileId=folder_id).execute()
-        print(f"🗑️ Deleted folder {drive_path} (id={folder_id})")
-        return True
-    except Exception as e:
-        print(f"⚠️ Drive delete folder failed: {e}")
-        return False

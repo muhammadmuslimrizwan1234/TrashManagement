@@ -13,7 +13,7 @@ import traceback
 from utils.file_utils import save_to_dataset, remove_duplicate_from_other_categories
 from utils.category_utils import get_categories
 from models.classifier import predict_image_file
-from utils.drive_util import  upload_to_drive, delete_from_drive, delete_folder_from_drive  # ✅ added
+from utils.drive_util import upload_to_drive, delete_from_drive, move_in_drive  # ✅ updated imports
 
 # ---------------- Load Env ----------------
 load_dotenv()
@@ -154,13 +154,11 @@ def upload_dataset_image():
 @app.route("/api/categories", methods=["GET"])
 def categories():
     try:
-        cats = get_categories()  # now always fetched from Drive
+        cats = get_categories()  # now fetched from Drive
         return jsonify(cats), 200
     except Exception as e:
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
 
 
 @app.route("/api/dataset_images", methods=["GET"])
@@ -193,10 +191,10 @@ def delete_category():
         import shutil
         shutil.rmtree(folder)
 
-    # ✅ Delete from Drive as well
+    # ✅ Delete from Drive as well (only last folder/file)
     drive_rel_path = "dataset/" + "/".join([p for p in [main, sub, subsub] if p])
     try:
-        delete_folder_from_drive(drive_rel_path)
+        delete_from_drive(drive_rel_path)
     except Exception as e:
         print(f"⚠️ Drive folder delete failed: {e}")
 
