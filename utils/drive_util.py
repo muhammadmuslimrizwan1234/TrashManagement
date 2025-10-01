@@ -12,7 +12,7 @@ from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 SERVICE = None
 
-# Root folder (your TrashAI-Dataset folder)
+# Root folder (TrashAI-Dataset folder ID from .env)
 DRIVE_ROOT = os.getenv("DRIVE_FOLDER_ID", "root")
 
 
@@ -76,19 +76,13 @@ def resolve_dataset_path(drive_path, create=False):
     if not drive_path.startswith("dataset"):
         raise ValueError("All dataset paths must start with 'dataset/'")
 
-    rel_path = drive_path[len("dataset/"):].strip("/")
+    rel_path = drive_path[len("dataset/") :].strip("/")
 
-    # look for existing 'dataset' inside TrashAI-Dataset
-    try:
-        dataset_folder_id = get_folder_id("dataset", parent_id=DRIVE_ROOT, create=False)
-    except FileNotFoundError:
-        if create:
-            dataset_folder_id = get_folder_id("dataset", parent_id=DRIVE_ROOT, create=True)
-            print("📂 Created main dataset folder")
-        else:
-            raise
+    # ✅ Never recreate 'dataset'. Must already exist inside TrashAI-Dataset.
+    dataset_folder_id = get_folder_id("dataset", parent_id=DRIVE_ROOT, create=False)
 
     return dataset_folder_id, rel_path
+
 
 # -------- Download --------
 def download_from_drive(drive_path, local_path):
@@ -151,7 +145,7 @@ def upload_to_drive(local_path, drive_path):
     Creates intermediate folders if missing.
     """
     service = get_service()
-    dataset_folder_id, rel_path = resolve_dataset_path(drive_path, create=True)
+    dataset_folder_id, rel_path = resolve_dataset_path(drive_path, create=False)
 
     folder_path, filename = os.path.split(rel_path)
     parent_id = get_folder_id(folder_path, parent_id=dataset_folder_id, create=True)
@@ -159,12 +153,15 @@ def upload_to_drive(local_path, drive_path):
     file_metadata = {"name": filename, "parents": [parent_id]}
     media = MediaFileUpload(local_path, resumable=True)
 
-    file = service.files().create(
-        body=file_metadata, media_body=media, fields="id"
-    ).execute()
-
-    print(f"⬆️ Uploaded {local_path} -> {drive_path} (id={file['id']})")
-    return file["id"]
+    try:
+        file = service.files().create(
+            body=file_metadata, media_body=media, fields="id"
+        ).execute()
+        print(f"⬆️ Uploaded {local_path} -> {drive_path} (id={file['id']})")
+        return file["id"]
+    except Exception as e:
+        print(f"⚠️ Drive upload failed: {e}")
+        return None
 
 
 # -------- Delete --------
@@ -205,7 +202,7 @@ def move_in_drive(old_drive_path, new_drive_path):
     service = get_service()
 
     old_dataset_id, old_rel_path = resolve_dataset_path(old_drive_path)
-    new_dataset_id, new_rel_path = resolve_dataset_path(new_drive_path, create=True)
+    new_dataset_id, new_rel_path = resolve_dataset_path(new_drive_path, create=False)
 
     old_parent, old_filename = os.path.split(old_rel_path)
     new_parent, new_filename = os.path.split(new_rel_path)
