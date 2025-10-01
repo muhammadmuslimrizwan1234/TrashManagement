@@ -189,3 +189,19 @@ def move_in_drive(old_drive_path, new_drive_path):
 
     print(f"📂 Moved {old_drive_path} -> {new_drive_path}")
     return updated["id"]
+def delete_folder_from_drive(drive_path):
+    """
+    Delete a folder (and its contents) from Google Drive by path.
+    """
+    service = get_service()
+
+    try:
+        folder_id = get_folder_id(drive_path)
+    except FileNotFoundError:
+        print(f"⚠️ Folder {drive_path} not found in Drive")
+        return False
+
+    # Delete the folder by moving to trash
+    service.files().delete(fileId=folder_id).execute()
+    print(f"🗑️ Deleted folder {drive_path} from Drive")
+    return True
