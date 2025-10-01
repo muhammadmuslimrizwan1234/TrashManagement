@@ -66,9 +66,9 @@ def get_folder_id(path, parent_id=None, create=False):
     return current_parent
 
 
-def resolve_dataset_path(drive_path, create=False):
+def resolve_dataset_path(drive_path):
     """
-    Always resolve inside TrashAI-Dataset/dataset.
+    Resolve inside the existing TrashAI-Dataset/dataset folder.
     Example:
       drive_path='dataset/Metal/Zinc/img.jpg'
       returns (dataset_folder_id, 'Metal/Zinc/img.jpg')
@@ -78,10 +78,25 @@ def resolve_dataset_path(drive_path, create=False):
 
     rel_path = drive_path[len("dataset/") :].strip("/")
 
-    # ✅ Never recreate 'dataset'. Must already exist inside TrashAI-Dataset.
-    dataset_folder_id = get_folder_id("dataset", parent_id=DRIVE_ROOT, create=False)
+    service = get_service()
 
-    return dataset_folder_id, rel_path
+    # 🔎 Always locate the already-existing "dataset" folder
+    query = (
+        f"mimeType='application/vnd.google-apps.folder' and "
+        f"name='dataset' and '{DRIVE_ROOT}' in parents and trashed=false"
+    )
+    dataset_folders = (
+        service.files()
+        .list(q=query, fields="files(id, name)")
+        .execute()
+        .get("files", [])
+    )
+
+    if not dataset_folders:
+        raise FileNotFoundError("❌ 'dataset' folder not found inside TrashAI-Dataset")
+
+    dataset_id = dataset_folders[0]["id"]
+    return dataset_id, rel_path
 
 
 # -------- Download --------
@@ -142,27 +157,25 @@ def download_from_drive(drive_path, local_path):
 def upload_to_drive(local_path, drive_path):
     """
     Upload a local file into Google Drive dataset folder.
-    Creates intermediate folders if missing.
+    Creates category/sub-category folders if missing.
     """
     service = get_service()
-    dataset_folder_id, rel_path = resolve_dataset_path(drive_path, create=False)
+    dataset_folder_id, rel_path = resolve_dataset_path(drive_path)
 
     folder_path, filename = os.path.split(rel_path)
+
+    # create only category/sub-category if not exist
     parent_id = get_folder_id(folder_path, parent_id=dataset_folder_id, create=True)
 
     file_metadata = {"name": filename, "parents": [parent_id]}
     media = MediaFileUpload(local_path, resumable=True)
 
-    try:
-        file = service.files().create(
-            body=file_metadata, media_body=media, fields="id"
-        ).execute()
-        print(f"⬆️ Uploaded {local_path} -> {drive_path} (id={file['id']})")
-        return file["id"]
-    except Exception as e:
-        print(f"⚠️ Drive upload failed: {e}")
-        return None
+    file = service.files().create(
+        body=file_metadata, media_body=media, fields="id"
+    ).execute()
 
+    print(f"⬆️ Uploaded {local_path} -> {drive_path} (id={file['id']})")
+    return file["id"]
 
 # -------- Delete --------
 def delete_from_drive(drive_path):
