@@ -54,6 +54,8 @@ def load_images(paths, img_size):
 
 def main():
     print("⬇️ Downloading dataset from Google Drive...")
+    from utils.drive_util import debug_list_root
+    debug_list_root()
     download_from_drive("dataset", DATASET_DIR)
 
     print("Loading dataset...")

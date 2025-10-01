@@ -9,7 +9,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 
 # -------- Setup --------
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 SERVICE = None
 
 # Root folder (TrashAI-Dataset folder ID from .env)
@@ -29,42 +29,34 @@ def get_service():
 
 
 # -------- Helpers --------
-def get_folder_id(path, parent_id=None, create=False):
+def get_folder_id(folder_path, parent_id=DRIVE_ROOT):
     """
-    Resolve folder path into Google Drive folder id.
-    If create=True, missing folders are created.
+    Resolve a folder path like 'dataset/glass' step by step.
     """
     service = get_service()
-    current_parent = parent_id or DRIVE_ROOT
+    parts = folder_path.strip("/").split("/")
 
-    if not path.strip():
-        return current_parent
-
-    parts = path.strip("/").split("/")
+    current_parent = parent_id
     for part in parts:
-        query = (
-            f"mimeType='application/vnd.google-apps.folder' "
-            f"and name='{part}' and '{current_parent}' in parents and trashed=false"
-        )
-        results = service.files().list(q=query, fields="files(id)").execute()
-        files = results.get("files", [])
+        query = f"'{current_parent}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        results = service.files().list(
+            q=query,
+            fields="files(id, name)",
+            includeItemsFromAllDrives=True,
+            supportsAllDrives=True
+        ).execute()
+        items = results.get("files", [])
 
-        if files:
-            current_parent = files[0]["id"]
-        elif create:
-            folder_metadata = {
-                "name": part,
-                "mimeType": "application/vnd.google-apps.folder",
-                "parents": [current_parent],
-            }
-            folder = service.files().create(body=folder_metadata, fields="id").execute()
-            current_parent = folder["id"]
-            print(f"📂 Created folder '{part}'")
-        else:
-            raise FileNotFoundError(f"Folder '{part}' not found in Drive path: {path}")
+        # try to match ignoring case
+        match = next((i for i in items if i["name"].lower() == part.lower()), None)
+        if not match:
+            # debug print
+            print(f"📂 Available in '{current_parent}': {[i['name'] for i in items]}")
+            raise FileNotFoundError(f"❌ '{folder_path}' folder not found inside root (ID={parent_id})")
+
+        current_parent = match["id"]
 
     return current_parent
-
 
 def resolve_dataset_path(drive_path):
     """
@@ -244,3 +236,15 @@ def move_in_drive(old_drive_path, new_drive_path):
 
     print(f"📂 Moved {old_drive_path} -> {new_drive_path}")
     return updated["id"]
+def debug_list_root():
+    service = get_service()
+    print(f"📂 Folders under DRIVE_ROOT (ID={DRIVE_ROOT}):")
+    query = f"'{DRIVE_ROOT}' in parents and trashed=false"
+    results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
+    items = results.get("files", [])
+    for item in items:
+        print(f" - {item['name']} ({item['mimeType']}) [{item['id']}]")
+    if not items:
+        print("⚠️ No items found under this root!")
+
+
