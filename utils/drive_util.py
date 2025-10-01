@@ -7,9 +7,10 @@ import json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaFileUpload
 
 # -------- Setup --------
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]  # 🔹 Read-only
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 SERVICE = None
 
 # Root folder (shared drive folder ID instead of "root")
@@ -113,3 +114,78 @@ def download_from_drive(drive_path, local_path):
             while not done:
                 status, done = downloader.next_chunk()
         print(f"⬇️ Downloaded {drive_path} -> {local_path}")
+
+
+def upload_to_drive(local_path, drive_path):
+    """Upload local file into Google Drive dataset folder."""
+    service = get_service()
+    folder_path, filename = os.path.split(drive_path)
+    folder_id = get_folder_id(folder_path)
+
+    file_metadata = {"name": filename, "parents": [folder_id]}
+    media = MediaFileUpload(local_path, resumable=True)
+
+    file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id"
+    ).execute()
+
+    print(f"⬆️ Uploaded {local_path} -> {drive_path} (id={file['id']})")
+    return file["id"]
+
+
+def delete_from_drive(drive_path):
+    """Delete file from Google Drive if it exists."""
+    service = get_service()
+    folder_path, filename = os.path.split(drive_path)
+    folder_id = get_folder_id(folder_path)
+
+    query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+    results = service.files().list(q=query, fields="files(id)").execute()
+    files = results.get("files", [])
+
+    if not files:
+        print(f"⚠️ {drive_path} not found in Drive for delete")
+        return False
+
+    file_id = files[0]["id"]
+    service.files().delete(fileId=file_id).execute()
+    print(f"🗑️ Deleted {drive_path} (id={file_id})")
+    return True
+
+
+def move_in_drive(old_drive_path, new_drive_path):
+    """Move (rename path) a file in Google Drive."""
+    service = get_service()
+
+    # Find old file
+    old_folder, old_filename = os.path.split(old_drive_path)
+    old_folder_id = get_folder_id(old_folder)
+
+    query = f"name='{old_filename}' and '{old_folder_id}' in parents and trashed=false"
+    results = service.files().list(q=query, fields="files(id)").execute()
+    files = results.get("files", [])
+    if not files:
+        print(f"⚠️ {old_drive_path} not found in Drive for move")
+        return None
+    file_id = files[0]["id"]
+
+    # Find new folder
+    new_folder, new_filename = os.path.split(new_drive_path)
+    new_folder_id = get_folder_id(new_folder)
+
+    # Remove from old parent and add to new parent
+    file = service.files().get(fileId=file_id, fields="parents").execute()
+    prev_parents = ",".join(file.get("parents", []))
+
+    updated = service.files().update(
+        fileId=file_id,
+        addParents=new_folder_id,
+        removeParents=prev_parents,
+        body={"name": new_filename},
+        fields="id, parents"
+    ).execute()
+
+    print(f"📂 Moved {old_drive_path} -> {new_drive_path}")
+    return updated["id"]

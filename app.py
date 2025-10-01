@@ -13,7 +13,7 @@ import traceback
 from utils.file_utils import save_to_dataset, remove_duplicate_from_other_categories
 from utils.category_utils import get_categories
 from models.classifier import predict_image_file
-from utils.drive_util import download_from_drive   # ✅ only download
+from utils.drive_util import download_from_drive, upload_to_drive, delete_from_drive, delete_folder_from_drive  # ✅ added
 
 # ---------------- Load Env ----------------
 load_dotenv()
@@ -65,12 +65,10 @@ def predict():
         result = predict_image_file(saved_path)
         classification = result["objects"][0]  # first object
     except Exception as e:
-        # 🔥 Log full traceback to Railway logs
         traceback.print_exc()
         print("🔥 PREDICT ERROR:", e)
         return jsonify({"error": str(e)}), 500
 
-    # Handle low confidence
     label = classification["label"]
     confidence = float(classification["confidence"])
     if confidence < 0.6:
@@ -78,7 +76,6 @@ def predict():
 
     hierarchy = classification.get("hierarchy", [])
 
-    # Save prediction record
     record = {
         "image_path": saved_path,
         "label": label,
@@ -89,7 +86,6 @@ def predict():
     }
     db["predictions"].insert_one(record)
 
-    # Build response
     response = {
         "image_url": f"{request.host_url}uploads/{urllib.parse.quote(os.path.basename(saved_path))}",
         "label": record["label"],
@@ -137,6 +133,13 @@ def upload_dataset_image():
         }
         db["dataset_images"].insert_one(record)
 
+        # ✅ Upload to Drive
+        drive_rel_path = f"dataset/{rel_path}"
+        try:
+            upload_to_drive(final_path, drive_rel_path)
+        except Exception as e:
+            print(f"⚠️ Drive upload failed: {e}")
+
         results.append({
             "message": "Image added",
             "path": final_path,
@@ -147,9 +150,17 @@ def upload_dataset_image():
     return jsonify({"uploaded": len(results), "results": results}), 201
 
 
+# ---------------- Categories ----------------
 @app.route("/api/categories", methods=["GET"])
 def categories():
-    return jsonify(get_categories()), 200
+    try:
+        cats = get_categories()  # now always fetched from Drive
+        return jsonify(cats), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 
 
 @app.route("/api/dataset_images", methods=["GET"])
@@ -182,6 +193,13 @@ def delete_category():
         import shutil
         shutil.rmtree(folder)
 
+    # ✅ Delete from Drive as well
+    drive_rel_path = "dataset/" + "/".join([p for p in [main, sub, subsub] if p])
+    try:
+        delete_folder_from_drive(drive_rel_path)
+    except Exception as e:
+        print(f"⚠️ Drive folder delete failed: {e}")
+
     db["dataset_images"].delete_many({
         "hierarchy.main": main,
         "hierarchy.sub": sub,
@@ -199,10 +217,17 @@ def delete_dataset_image(hash_value):
 
     if os.path.exists(doc["path"]):
         os.remove(doc["path"])
+
+    rel_path = doc.get("rel_path")
+    if rel_path:
+        try:
+            drive_rel_path = f"dataset/{rel_path}"
+            delete_from_drive(drive_rel_path)
+        except Exception as e:
+            print(f"⚠️ Drive delete failed: {e}")
+
     db["dataset_images"].delete_one({"hash": hash_value})
-
     return jsonify({"message": "Image deleted"}), 200
-
 
 # ---------------- Serve uploaded images ----------------
 @app.route("/uploads/<path:filename>")
@@ -214,9 +239,7 @@ def uploaded_file(filename):
 def dataset_file(filename):
     return send_from_directory(DATASET_FOLDER, filename)
 
-
 # ---------------- Main ----------------
 if __name__ == "__main__":
     print("✅ Using local model and class names in /models/")
-    
     app.run(host="0.0.0.0", port=PORT, debug=DEBUG)

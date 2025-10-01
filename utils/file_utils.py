@@ -2,6 +2,7 @@ import os
 import shutil
 from werkzeug.utils import secure_filename
 from utils.hash_utils import get_image_hash
+from utils.drive_util import move_in_drive
 
 # dataset root folder
 DATASET_DIR = os.path.join(os.path.dirname(__file__), "..", "dataset")
@@ -76,23 +77,26 @@ def move_existing_file(existing_doc, new_hierarchy):
 
 
 def remove_duplicate_from_other_categories(db, hash_value, final_path, hierarchy):
-    """
-    If duplicate image exists in another category:
-      - Move it into the new category with unique filename
-      - Update DB record
-    """
     dataset_images = db["dataset_images"]
 
     existing_doc = dataset_images.find_one({"hash": hash_value})
     if existing_doc:
         old_hierarchy = existing_doc["hierarchy"]
 
-        # same category → do nothing
         if old_hierarchy == hierarchy:
             return
 
-        # different category → move file + update DB
+        # Move local
         new_path, rel_path = move_existing_file(existing_doc, hierarchy)
+
+        # Move in Drive
+        old_drive_rel = f"dataset/{existing_doc['rel_path']}"
+        new_drive_rel = f"dataset/{rel_path}"
+        try:
+            move_in_drive(old_drive_rel, new_drive_rel)
+        except Exception as e:
+            print(f"⚠️ Drive move failed: {e}")
+
         dataset_images.update_one(
             {"_id": existing_doc["_id"]},
             {"$set": {
