@@ -1,3 +1,4 @@
+# backend/utils/drive_util.py
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -12,7 +13,7 @@ from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 SERVICE = None
 
-# Root folder (your TrashAI-Dataset folder)
+# Root folder (TrashAI-Dataset folder ID from .env)
 DRIVE_ROOT = os.getenv("DRIVE_FOLDER_ID", "root")
 
 
@@ -29,10 +30,27 @@ def get_service():
 
 
 # -------- Helpers --------
+def list_drive_items(parent_id):
+    """List all children of a folder (with pagination)."""
+    service = get_service()
+    items, page_token = [], None
+    while True:
+        results = service.files().list(
+            q=f"'{parent_id}' in parents and trashed=false",
+            fields="nextPageToken, files(id, name, mimeType)",
+            pageToken=page_token,
+        ).execute()
+        items.extend(results.get("files", []))
+        page_token = results.get("nextPageToken")
+        if not page_token:
+            break
+    return items
+
+
 def get_folder_id(path, parent_id=None, create=False):
     """
     Resolve folder path into Google Drive folder id.
-    If create=True, missing folders are created.
+    Supports both folder names and raw folder IDs.
     """
     service = get_service()
     current_parent = parent_id or DRIVE_ROOT
@@ -40,17 +58,20 @@ def get_folder_id(path, parent_id=None, create=False):
     if not path.strip():
         return current_parent
 
+    # ✅ if path looks like a Drive ID, return directly
+    if len(path) > 20 and "/" not in path and "\\" not in path:
+        return path
+
     parts = path.strip("/").split("/")
     for part in parts:
-        query = (
-            f"mimeType='application/vnd.google-apps.folder' "
-            f"and name='{part}' and '{current_parent}' in parents and trashed=false"
+        items = list_drive_items(current_parent)
+        match = next(
+            (x for x in items if x["name"] == part and x["mimeType"] == "application/vnd.google-apps.folder"),
+            None,
         )
-        results = service.files().list(q=query, fields="files(id)").execute()
-        files = results.get("files", [])
 
-        if files:
-            current_parent = files[0]["id"]
+        if match:
+            current_parent = match["id"]
         elif create:
             folder_metadata = {
                 "name": part,
@@ -61,6 +82,7 @@ def get_folder_id(path, parent_id=None, create=False):
             current_parent = folder["id"]
             print(f"📂 Created folder '{part}'")
         else:
+            print("📂 Available folders here:", [i["name"] for i in items])
             raise FileNotFoundError(f"Folder '{part}' not found in Drive path: {path}")
 
     return current_parent
@@ -71,24 +93,14 @@ def resolve_dataset_path(drive_path, create=False):
     Always resolve inside TrashAI-Dataset/dataset.
     Example:
       drive_path='dataset/Metal/Zinc/img.jpg'
-      returns (dataset_folder_id, 'Metal/Zinc/img.jpg')
     """
     if not drive_path.startswith("dataset"):
         raise ValueError("All dataset paths must start with 'dataset/'")
 
     rel_path = drive_path[len("dataset/"):].strip("/")
-
-    # look for existing 'dataset' inside TrashAI-Dataset
-    try:
-        dataset_folder_id = get_folder_id("dataset", parent_id=DRIVE_ROOT, create=False)
-    except FileNotFoundError:
-        if create:
-            dataset_folder_id = get_folder_id("dataset", parent_id=DRIVE_ROOT, create=True)
-            print("📂 Created main dataset folder")
-        else:
-            raise
-
+    dataset_folder_id = get_folder_id("dataset", parent_id=DRIVE_ROOT, create=create)
     return dataset_folder_id, rel_path
+
 
 # -------- Download --------
 def download_from_drive(drive_path, local_path):
@@ -102,10 +114,8 @@ def download_from_drive(drive_path, local_path):
         folder_id = get_folder_id(drive_path)
         os.makedirs(local_path, exist_ok=True)
 
-        query = f"'{folder_id}' in parents and trashed=false"
-        results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
-
-        for item in results.get("files", []):
+        items = list_drive_items(folder_id)
+        for item in items:
             file_id, name, mime = item["id"], item["name"], item["mimeType"]
             dest = os.path.join(local_path, name)
 

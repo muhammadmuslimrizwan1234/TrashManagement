@@ -1,6 +1,4 @@
-from dotenv import load_dotenv
-load_dotenv()
-
+# backend/train.py
 import os
 import json
 import numpy as np
@@ -12,20 +10,16 @@ from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.utils import to_categorical
 from sklearn.model_selection import train_test_split
 
-# ---- Drive Utils (only download now) ----
-from utils.drive_util import download_from_drive
-
 # CONFIG
 ROOT = os.path.dirname(__file__)
-DATASET_DIR = os.path.join(ROOT, "dataset")
+DATASET_DIR = os.path.join(ROOT, "dataset")  
 OUT_MODEL_DIR = os.path.join(ROOT, "models")
 OUT_MODEL_PATH = os.path.join(OUT_MODEL_DIR, "model.h5")
 CLASS_NAMES_PATH = os.path.join(OUT_MODEL_DIR, "class_names.json")
 
-# Training params (you can tweak later)
 IMG_SIZE = (96, 96)
 BATCH = 8
-EPOCHS = 1
+EPOCHS = 1  
 
 os.makedirs(OUT_MODEL_DIR, exist_ok=True)
 
@@ -44,18 +38,12 @@ def get_image_paths_labels(dataset_dir):
 def load_images(paths, img_size):
     X = []
     for p in paths:
-        try:
-            img = load_img(p, target_size=img_size)
-            arr = img_to_array(img) / 255.0
-            X.append(arr)
-        except Exception as e:
-            print(f"⚠️ Skipping {p}: {e}")
+        img = load_img(p, target_size=img_size)
+        arr = img_to_array(img)/255.0
+        X.append(arr)
     return np.array(X)
 
 def main():
-    print("⬇️ Downloading dataset from Google Drive...")
-    download_from_drive("dataset", DATASET_DIR)
-
     print("Loading dataset...")
     paths, labels = get_image_paths_labels(DATASET_DIR)
     if not paths:
@@ -69,23 +57,22 @@ def main():
 
     with open(CLASS_NAMES_PATH, "w") as f:
         json.dump(class_names, f)
-    print(f"✅ Class names saved to {CLASS_NAMES_PATH}")
+    print(f"Class names saved to {CLASS_NAMES_PATH}")
 
     X = load_images(paths, IMG_SIZE)
 
-    # Split into train/val/test
+    # Split into train/val/test (70/15/15)
     X_train, X_temp, y_train, y_temp = train_test_split(
         X, y_cat, test_size=0.3, random_state=42, stratify=y_int
     )
     X_val, X_test, y_val, y_test = train_test_split(
-        X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp.argmax(axis=1)
+        X_temp, y_temp, test_size=0.5, random_state=42
     )
 
     print(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
 
     # Build model
-    base_model = MobileNetV2(weights="imagenet", include_top=False,
-                             input_shape=(IMG_SIZE[0], IMG_SIZE[1], 3))
+    base_model = MobileNetV2(weights="imagenet", include_top=False, input_shape=(IMG_SIZE[0], IMG_SIZE[1], 3))
     base_model.trainable = False
 
     x = base_model.output
@@ -95,23 +82,19 @@ def main():
     outputs = layers.Dense(len(class_names), activation="softmax")(x)
 
     model = models.Model(inputs=base_model.input, outputs=outputs)
-    model.compile(optimizer=Adam(1e-4),
-                  loss="categorical_crossentropy",
-                  metrics=["accuracy"])
+    model.compile(optimizer=Adam(1e-4), loss="categorical_crossentropy", metrics=["accuracy"])
 
-    print("🚀 Training model...")
-    model.fit(X_train, y_train, validation_data=(X_val, y_val),
-              epochs=EPOCHS, batch_size=BATCH)
+    print("Training model...")
+    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=EPOCHS, batch_size=BATCH)
 
-    print("🔎 Evaluating on test set...")
+    # Final test evaluation
+    print("Evaluating on test set...")
     test_loss, test_acc = model.evaluate(X_test, y_test, verbose=2)
     print(f"✅ Final Test Accuracy: {test_acc*100:.2f}%")
 
-    # Save model locally
+    # Save model
     model.save(OUT_MODEL_PATH)
-    print(f"💾 Model saved to {OUT_MODEL_PATH}")
-
-    print("📌 Now manually upload `model.h5` and `class_names.json` to Google Drive.")
+    print(f"✅ Model saved to {OUT_MODEL_PATH}")
 
 if __name__ == "__main__":
     main()
