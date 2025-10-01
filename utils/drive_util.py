@@ -6,8 +6,7 @@ import io
 import json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 
 # -------- Setup --------
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
@@ -20,7 +19,6 @@ DRIVE_ROOT = os.getenv("DRIVE_FOLDER_ID", "root")
 def get_service():
     global SERVICE
     if SERVICE is None:
-        # Load credentials from env
         service_account_info = json.loads(os.getenv("SERVICE_ACCOUNT_JSON"))
         creds = service_account.Credentials.from_service_account_info(
             service_account_info, scopes=SCOPES
@@ -30,9 +28,9 @@ def get_service():
 
 
 # -------- Helpers --------
-def get_folder_id(path, parent_id=None):
+def get_folder_id(path, parent_id=None, create=False):
     """
-    Get (or create, if running locally with upload) nested folders in Google Drive.
+    Get (or create if create=True) nested folders in Google Drive.
     Always starts from DRIVE_ROOT.
     """
     service = get_service()
@@ -53,25 +51,28 @@ def get_folder_id(path, parent_id=None):
         if files:
             current_parent = files[0]["id"]
         else:
-            # ❌ On Railway we never create, only local
-            raise FileNotFoundError(f"Folder '{part}' not found in Drive path: {path}")
+            if create:
+                folder_metadata = {
+                    "name": part,
+                    "mimeType": "application/vnd.google-apps.folder",
+                    "parents": [current_parent],
+                }
+                folder = service.files().create(body=folder_metadata, fields="id").execute()
+                current_parent = folder["id"]
+                print(f"📂 Created folder '{part}' in Drive")
+            else:
+                raise FileNotFoundError(f"Folder '{part}' not found in Drive path: {path}")
 
     return current_parent
 
 
 # -------- Download --------
 def download_from_drive(drive_path, local_path):
-    """
-    Downloads a file/folder from Google Drive (read-only).
-    Example:
-      download_from_drive("models/model.h5", "./models/model.h5")
-      download_from_drive("dataset", "./dataset")
-    """
     service = get_service()
 
     # Folder case
     if not os.path.splitext(drive_path)[1]:
-        folder_id = get_folder_id(drive_path)
+        folder_id = get_folder_id(drive_path, create=False)
         os.makedirs(local_path, exist_ok=True)
 
         query = f"'{folder_id}' in parents and trashed=false"
@@ -92,9 +93,8 @@ def download_from_drive(drive_path, local_path):
                         status, done = downloader.next_chunk()
                 print(f"⬇️ Downloaded {drive_path}/{name} -> {dest}")
     else:
-        # File case
         folder_path, filename = os.path.split(drive_path)
-        folder_id = get_folder_id(folder_path) if folder_path else DRIVE_ROOT
+        folder_id = get_folder_id(folder_path, create=False) if folder_path else DRIVE_ROOT
 
         query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
         results = service.files().list(q=query, fields="files(id)").execute()
@@ -116,11 +116,12 @@ def download_from_drive(drive_path, local_path):
         print(f"⬇️ Downloaded {drive_path} -> {local_path}")
 
 
+# -------- Upload --------
 def upload_to_drive(local_path, drive_path):
-    """Upload local file into Google Drive dataset folder."""
+    """Upload local file into Google Drive dataset folder (auto-creates path)."""
     service = get_service()
     folder_path, filename = os.path.split(drive_path)
-    folder_id = get_folder_id(folder_path)
+    folder_id = get_folder_id(folder_path, create=True)
 
     file_metadata = {"name": filename, "parents": [folder_id]}
     media = MediaFileUpload(local_path, resumable=True)
@@ -135,11 +136,11 @@ def upload_to_drive(local_path, drive_path):
     return file["id"]
 
 
+# -------- Delete --------
 def delete_from_drive(drive_path):
-    """Delete file from Google Drive if it exists."""
     service = get_service()
     folder_path, filename = os.path.split(drive_path)
-    folder_id = get_folder_id(folder_path)
+    folder_id = get_folder_id(folder_path, create=False)
 
     query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
     results = service.files().list(q=query, fields="files(id)").execute()
@@ -156,12 +157,11 @@ def delete_from_drive(drive_path):
 
 
 def move_in_drive(old_drive_path, new_drive_path):
-    """Move (rename path) a file in Google Drive."""
     service = get_service()
 
     # Find old file
     old_folder, old_filename = os.path.split(old_drive_path)
-    old_folder_id = get_folder_id(old_folder)
+    old_folder_id = get_folder_id(old_folder, create=False)
 
     query = f"name='{old_filename}' and '{old_folder_id}' in parents and trashed=false"
     results = service.files().list(q=query, fields="files(id)").execute()
@@ -171,9 +171,9 @@ def move_in_drive(old_drive_path, new_drive_path):
         return None
     file_id = files[0]["id"]
 
-    # Find new folder
+    # Find/create new folder
     new_folder, new_filename = os.path.split(new_drive_path)
-    new_folder_id = get_folder_id(new_folder)
+    new_folder_id = get_folder_id(new_folder, create=True)
 
     # Remove from old parent and add to new parent
     file = service.files().get(fileId=file_id, fields="parents").execute()
@@ -189,19 +189,16 @@ def move_in_drive(old_drive_path, new_drive_path):
 
     print(f"📂 Moved {old_drive_path} -> {new_drive_path}")
     return updated["id"]
-def delete_folder_from_drive(drive_path):
-    """
-    Delete a folder (and its contents) from Google Drive by path.
-    """
-    service = get_service()
 
+
+def delete_folder_from_drive(drive_path):
+    service = get_service()
     try:
-        folder_id = get_folder_id(drive_path)
+        folder_id = get_folder_id(drive_path, create=False)
     except FileNotFoundError:
         print(f"⚠️ Folder {drive_path} not found in Drive")
         return False
 
-    # Delete the folder by moving to trash
     service.files().delete(fileId=folder_id).execute()
     print(f"🗑️ Deleted folder {drive_path} from Drive")
     return True
