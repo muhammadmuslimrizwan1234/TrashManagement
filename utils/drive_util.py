@@ -76,10 +76,19 @@ def resolve_dataset_path(drive_path, create=False):
     if not drive_path.startswith("dataset"):
         raise ValueError("All dataset paths must start with 'dataset/'")
 
-    rel_path = drive_path[len("dataset/") :].strip("/")
-    dataset_folder_id = get_folder_id("dataset", parent_id=DRIVE_ROOT, create=create)
-    return dataset_folder_id, rel_path
+    rel_path = drive_path[len("dataset/"):].strip("/")
 
+    # look for existing 'dataset' inside TrashAI-Dataset
+    try:
+        dataset_folder_id = get_folder_id("dataset", parent_id=DRIVE_ROOT, create=False)
+    except FileNotFoundError:
+        if create:
+            dataset_folder_id = get_folder_id("dataset", parent_id=DRIVE_ROOT, create=True)
+            print("📂 Created main dataset folder")
+        else:
+            raise
+
+    return dataset_folder_id, rel_path
 
 # -------- Download --------
 def download_from_drive(drive_path, local_path):
